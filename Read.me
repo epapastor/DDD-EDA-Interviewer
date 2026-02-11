@@ -1,0 +1,59 @@
+# 🤖 Autonomous Strategic DDD Multi-Agent System (ASDMAS)
+
+Una arquitectura cognitiva de vanguardia basada en **Event-Driven Microservices** para el modelado automático de dominios (DDD) mediante agentes de IA colaborativos.
+
+---
+
+## 🚀 Visión General
+Este sistema es un ecosistema de **agentes autónomos** que colaboran a través de un bus de eventos para transformar lenguaje natural en arquitecturas de software estructuradas. Diseñado bajo los principios de **aislamiento de procesos**, **tolerancia a fallos** y **eficiencia extrema**, permitiendo una orquestación compleja en entornos de solo 8GB de RAM.
+
+## 🏗️ Arquitectura Técnica: Los 3 Bucles
+El sistema implementa una **Coreografía de Eventos** dividida en tres flujos lógicos:
+1.  **Fast Loop (Interacción):** Baja latencia para la conversación fluida.
+2.  **Deep Loop (Análisis):** Procesamiento asíncrono y profundo de lógica DDD.
+3.  **Control Loop (Gobernanza):** Auditoría semántica y cierre de sesión.
+
+### 👥 Los Agentes (A2A Task Force)
+| Agente | Misión | Tecnología |
+| :--- | :--- | :--- |
+| **Interviewer** | Gestiona la conversación y recupera contexto de Redis. | Python Alpine / Groq |
+| **Pre-Analyst** | Filtra datos y garantiza integridad JSON (Self-Healing). | Python Alpine / Groq |
+| **Strategic Analyst** | Razonamiento profundo (Bounded Contexts, Core Domains). | Python Alpine / Groq |
+| **Moderator** | Juez de saturación de conocimiento y control de estado. | Python Alpine / Groq |
+| **Historian** | Persistencia física ReAct (Acting) con garantía `fsync`. | Python Alpine / Determinista |
+
+---
+
+## 🛠️ Decisiones de Ingeniería y Robustez
+
+### 1. Eficiencia en 8GB RAM
+* **Python Alpine:** Imágenes ultra-ligeras que reducen el consumo de RAM base a ~25MB por contenedor.
+* **Redpanda:** Motor de eventos en C++ que elimina la pesada sobrecarga de la JVM de Kafka.
+* **Stateless Agents:** La memoria de trabajo vive en **Redis** (`Sliding Window`), permitiendo que los agentes sean amnésicos y ligeros.
+
+### 2. Trazabilidad y Seguridad
+* **Standardized Envelopes:** Protocolo A2A con Metadata + Payload para auditoría total.
+* **Garantía `fsync`:** El Historian fuerza la escritura a disco físico, asegurando durabilidad ante fallos eléctricos.
+* **Event Replay:** Capacidad de reproducir cualquier sesión gracias a la inmutabilidad de los logs de Redpanda.
+
+---
+
+## 🔧 Instalación y Despliegue
+
+### Paso 1: Levantar la Infraestructura
+Asegúrate de tener Docker instalado y tu `GROQ_API_KEY` configurada en el entorno.
+```bash
+docker-compose up -d
+
+### Paso 2: Provisionamiento de Tópicos (Red de Eventos)
+docker compose exec redpanda rpk topic create \
+  ai.questions \
+  user.answers \
+  domain.preprocessed \
+  information.retrieval \
+  interview.status \
+  domain.strategic.analysis
+
+### Paso 3: Interfaz de Usuario
+Ejecuta el gateway para iniciar la interacción:
+python chat.py

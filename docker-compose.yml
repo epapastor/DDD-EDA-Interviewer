@@ -1,0 +1,111 @@
+services:
+  # --- INFRAESTRUCTURA DE EVENTOS (Cerebro Nervioso) ---
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:latest
+    command: >
+      redpanda start 
+      --overprovisioned 
+      --smp 1 
+      --memory 512M
+      --reserve-memory 0M
+      --kafka-addr internal://0.0.0.0:29092,external://0.0.0.0:9092 
+      --advertise-kafka-addr internal://redpanda:29092,external://localhost:9092
+    ports:
+      - "9092:9092"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy|OK'"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  console:
+    image: docker.redpanda.com/redpandadata/console:latest
+    environment:
+      KAFKA_BROKERS: "redpanda:29092"
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redpanda
+
+  # --- INFRAESTRUCTURA DE MEMORIA (Cerebro Retentivo) ---
+  redis:
+    image: redis:alpine
+    ports:
+      - "6379:6379" # Puerto expuesto por si quieres verlo con Redis Insight
+    volumes:
+      - redis-data:/data
+    deploy:
+      resources:
+        limits:
+          memory: 200M
+
+  # --- AGENTES INTELIGENTES (Microservicios) ---
+  interviewer:
+    build: .
+    command: python interviewer.py
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  # Paso 1: Limpieza
+  analyst-pre:
+    build: .
+    command: python analyst_pre.py
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redis:
+        condition: service_started
+  
+  analyst:
+    build: .
+    command: python analyst.py
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redis:
+        condition: service_started
+        
+
+  moderator:
+    build: .
+    command: python moderator.py
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY}
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  historian:
+    build: .
+    command: python historian.py
+    # ---------------------------------------------------------
+    # CAMBIO 1: El Puente de Datos (CRÍTICO)
+    # Esto hace que lo que se escriba en /app/logs dentro de Docker
+    # aparezca mágicamente en tu carpeta ./logs del proyecto.
+    volumes:
+      - ./logs:/app/output #Ruta en el ordenador : Ruta dentro del contenedor
+    # ---------------------------------------------------------
+    environment:
+      - GROQ_API_KEY=${GROQ_API_KEY} # (Opcional: El Historian no usa IA, podrías quitarlo)
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      # (Opcional: El Historian ya no usa Redis, podrías quitar esta dependencia)
+
+
+volumes:
+  redpanda-data:
+  redis-data:

@@ -1,0 +1,4 @@
+confluent-kafka==2.4.0
+groq
+python-dotenv
+redis
