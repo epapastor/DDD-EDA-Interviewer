@@ -32,7 +32,8 @@ El sistema implementa una **Coreografía de Eventos** dividida en tres flujos l�
 * **Stateless Agents:** La memoria de trabajo vive en **Redis** (`Sliding Window`), permitiendo que los agentes sean amnésicos y ligeros.
 
 ### 2. Trazabilidad y Seguridad
-* **Standardized Envelopes:** Protocolo A2A con Metadata + Payload para auditoría total.
+* **Standardized Envelopes:** Protocolo A2A con Metadata + Payload para auditoría total. 
+* **Para trazabilidad se puede utilizar el comando docker logs 
 * **Garantía `fsync`:** El Historian fuerza la escritura a disco físico, asegurando durabilidad ante fallos eléctricos.
 * **Event Replay:** Capacidad de reproducir cualquier sesión gracias a la inmutabilidad de los logs de Redpanda.
 
@@ -56,4 +57,6 @@ docker compose exec redpanda rpk topic create \
 
 ### Paso 3: Interfaz de Usuario
 Ejecuta el gateway para iniciar la interacción:
-python chat.py
+python Consulting.py
+
+
