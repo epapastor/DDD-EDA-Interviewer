@@ -96,7 +96,7 @@ services:
     # Esto hace que lo que se escriba en /app/logs dentro de Docker
     # aparezca mágicamente en tu carpeta ./logs del proyecto.
     volumes:
-      - ./logs:/app/output #Ruta en el ordenador : Ruta dentro del contenedor
+      - "/home/enrique/Ciencia_e_ingeneria_de_datos_URJC/ERASMUS/Microservices programming for AI /DDD-EDA-Interviewer/DDD-EDA-Interviewer/AI-system/data:/app/data" #Ruta en el ordenador : Ruta dentro del contenedor
     # ---------------------------------------------------------
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY} # (Opcional: El Historian no usa IA, podrías quitarlo)
@@ -107,5 +107,5 @@ services:
 
 
 volumes:
-  redpanda-data:
+  redpanda-data:  # Estos son volúmenes gestionados por Docker (no ves los archivos fácilmente)
   redis-data:
