@@ -3,87 +3,106 @@ import sys
 import json
 from datetime import datetime
 from confluent_kafka import Consumer
+from pydantic import BaseModel, Field, validator
+from typing import Dict, Any, Optional
 from dotenv import load_dotenv
+from logger_config import get_logger
 
-# Configuración de salida
-sys.stdout.reconfigure(line_buffering=True)
-load_dotenv()
+# 1. Definimos el contrato con campos opcionales para evitar que el script muera
+# Definimos la clase heredando de BaseModel para habilitar la validación automática de tipos
+class MessageEnvelope(BaseModel):
+    
+    # Identificador único del agente: Fundamental para el trazado (Lineage) del dato
+    agent_id: str 
+    
+    # ID de sesión: Permite agrupar eventos y reconstruir el estado en sistemas distribuidos
+    session_id: str 
+    
+    # Marca de tiempo: Usamos Field para asegurar que si no viene, se genere en UTC al vuelo
+    # En Data Engineering, el timestamp es vital para el ordenamiento en Kafka/Redpanda
+    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    
+    # Tipo de evento: La clave del contrato. Define qué lógica debe disparar el consumidor
+    event_type: str
+    
+    # Payload: Diccionario flexible para los datos del mensaje (el "cuerpo" del evento)
+    # Usamos Any para permitir diferentes estructuras internas según el agente
+    payload: Dict[str, Any]
 
-# Configuración Kafka
-c = Consumer({
-    'bootstrap.servers': 'redpanda:29092',
-    'group.id': 'historian-group',
-    'auto.offset.reset': 'earliest'
-})
+    # Decorador que actúa como un "filtro de calidad" específico para el campo event_type
+    @validator('event_type')
+    def validate_event(cls, v):
+        # Lista blanca (White List): Solo permitimos estos estados para evitar "Data Drift"
+        allowed = ["INFO_CLASSIFIED", "QUESTION_GENERATED", "STRATEGIC_ANALYSIS_CREATED", "FINISHED"]
+        
+        # Si el valor (v) no está en la lista, lanzamos un error preventivo (Fail-Fast)
+        if v not in allowed:
+            raise ValueError(f"Evento '{v}' no reconocido por el contrato de datos")
+        
+        # Si es válido, devolvemos el valor para que Pydantic termine la instanciación
+        return v
 
-# Escuchamos el análisis estratégico. 
-# OPCIONAL: Podrías escuchar también 'ai.questions' si quieres guardar el chat completo.
+c = Consumer({'bootstrap.servers': 'redpanda:29092', 
+    'group.id': 'moderator-group', 
+    'auto.offset.reset': 'earliest'})
+# ... (Configuración de Kafka igual) ...
 c.subscribe(['domain.strategic.analysis'])
 
-LOG_DIR = "./output"
-os.makedirs(LOG_DIR, exist_ok=True)
+logger = get_logger("historian-service")
 
-def escribir_en_disco_por_sesion(envelope):
-    """
-    Escribe el evento en un archivo específico para la sesión.
-    Esto permite tener trazabilidad aislada por cada entrevista.
-    """
-    try:
-        # 1. Extraemos el ID de sesión para nombrar el archivo
-        meta = envelope.get('metadata', {})
-        session_id = meta.get('session_id', 'unknown_session')
+
+def save_to_lake(envelope: MessageEnvelope):
+    try: 
+        # Si timestamp es string, lo convertimos a datetime para sacar el año/mes/día
+        dt = envelope.timestamp
+        if isinstance(dt, str):
+            try:
+                dt = datetime.fromisoformat(dt.replace('Z', '+00:00'))
+            except:
+                dt = datetime.utcnow() # Fallback si el formato es raro
+
+        path = f"data/raw/year={dt.year}/month={dt.month:02d}/day={dt.day:02d}/"
+        os.makedirs(path, exist_ok=True)
+        safe_session = "".join([c for c in envelope.session_id if c.isalnum() or c in ('-','_')])
+        file_path = os.path.join(path, f"{safe_session}.jsonl")
         
-        # Sanitizamos el nombre del archivo para evitar errores en SO
-        safe_session_id = "".join([c for c in session_id if c.isalnum() or c in ('-','_')])
-        filename = f"{LOG_DIR}/history_{safe_session_id}.jsonl"
-
-        # 2. Escribimos el sobre completo (Metadata + Payload)
-        # Modo 'a' (append) para añadir al historial sin borrar lo anterior
-        with open(filename, 'a', encoding='utf-8') as f:
-            # json.dumps asegura que se escriba en una sola línea (JSONL standard)
-            linea = json.dumps(envelope, ensure_ascii=False)
-            f.write(linea + "\n")
-            
-            # 3. Persistencia Sólida (Flush + Fsync)
+        with open(file_path, "a", encoding='utf-8') as f:
+            # Compatibilidad Pydantic V1/V2
+            out_data = envelope.model_dump_json() if hasattr(envelope, 'model_dump_json') else envelope.json()
+            f.write(out_data + "\n")
             f.flush()
-            os.fsync(f.fileno()) 
-            
-        return True, filename
+            os.fsync(f.fileno())
+        return file_path
     except Exception as e:
-        print(f"🚨 Error escribiendo en disco: {e}", flush=True)
-        return False, None
+        print(f"🚨 Error interno guardando: {e}")
+        return None
 
-print(f"📚 HISTORIADOR: Listo para archivar en carpeta '{LOG_DIR}/'...", flush=True)
 
 while True:
     msg = c.poll(1.0)
     if msg is None: continue
-    if msg.error():
-        print(f"Error Kafka: {msg.error()}", flush=True)
-        continue
-
+    
     try:
-        # --- 1. DESEMPAQUETADO ---
-        # Ahora recibimos un JSON Envelope, no texto plano
-        mensaje_json = msg.value().decode('utf-8')
-        envelope = json.loads(mensaje_json)
+        raw_json = json.loads(msg.value().decode('utf-8'))
         
-        # Validamos que sea un mensaje con la estructura nueva
-        if 'metadata' not in envelope:
-            # Soporte legacy por si llega un mensaje viejo
-            envelope = {
-                "metadata": {"session_id": "legacy_data", "timestamp": datetime.now().isoformat()},
-                "payload": {"contenido": envelope}
-            }
+        # LOG de depuración: Descomenta esto para ver qué llega exactamente
+        # print(f"DEBUG: Recibido -> {raw_json}")
 
-        # --- 2. PERSISTENCIA (ACTING) ---
-        exito, ruta_fichero = escribir_en_disco_por_sesion(envelope)
-        
-        if exito:
-            agent = envelope['metadata'].get('agent_id', 'unknown')
-            print(f"💾 Evento de [{agent}] guardado en: {ruta_fichero}", flush=True)
+        if "metadata" in raw_json:
+            flat_data = {**raw_json["metadata"], "payload": raw_json["payload"]}
+        else:
+            flat_data = raw_json
 
-    except json.JSONDecodeError:
-        print(f"⚠️ Error: Llegó un mensaje que no es JSON válido. Ignorando.", flush=True)
+        # VALIDACIÓN
+        validated_envelope = MessageEnvelope(**flat_data)
+        # Log con contexto adicional (session_id)
+        session_id = validated_envelope.session_id
+        logger.info(f"Guardando evento en Data Lake", extra={'session_id': session_id})
+        ruta = save_to_lake(validated_envelope)
+        if ruta:
+            print(f"💾 [OK] {validated_envelope.event_type} -> {ruta}")
+
     except Exception as e:
-        print(f"🚨 Error crítico en Historian: {e}", flush=True)
+        # Aquí verás exactamente por qué Pydantic rechaza el mensaje
+        print(f"⚠️ ERROR DE VALIDACIÓN: {e}")
+        print(f"Contenido problemático: {raw_json}")
